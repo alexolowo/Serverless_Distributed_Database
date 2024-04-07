@@ -10,28 +10,21 @@
 
 3. Start up 1+ KVClients. Connect to a KVServer and put in keys.
 
-# Milestone 3 info
-
-- Create replicas: (Alex)
-    - 2 closest successors are designated as replicas. KVServer can parse and keep track of who its successors are from metadata and designate them as replicas.
-    - each server keeps replicas of its 2 closest predecessors. KVServer can parse who its predecessors are from metadata.
-    - Figure out how to separate replicated data vs coordinator's data
-        - 3 kv maps: kvs (coordinator's data), kvs_replica1, kvs_replica2
-        - in storage: modify json format {kvs: [{}], kvs_replica1: [{}], kvs_replica2: [{}]}, or different .json files (easier)
-    - Whenever a PUT request is received, PUT to both successors.
-        - create a new request type to put from coordinator to replica: PUT_FROM_COORDINATOR_1, PUT_FROM_COORDINATOR_2
-        - use the socket to figure out where the request is coming from and put in the appropriate storage
-    - Implement KEYRANGE_READ message and handling. Maintain a 2nd set of metadata that includes replica extended keyranges (its own keyrange, its predecessor's keyrange, its 2nd predecessor's keyrange)
-    - If a replica is being read and it has the key, make sure key is delivered instead of insisting SERVER_NOT_RESPONSIBLE
-
-- Failure detection: (Petra)
-    - Use heartbeat to detect KVServer liveness: (DONE)
-        - Send heartbeat to ECS every X seconds using a thread
-        - Need to change ECS architecture to accept (DONE)
-        - ECS is waiting for these and processes these commands (DONE)
-        - Implement the actual check in its own thread.
-        - One-way to reduce network traffic.
-        - When a KVServer fails remove it from the ring (TODO)
-    - Then invoke a special "failure rebalance": TODO after replicas
-        - Draw out which nodes are affected
-        - Should be able to handle more than one failed node at the same time, but what happens if failure occurs during recovery process?
+# Todo: Milestone 4 (notification mechanism)
+- API Extension for subscribe and unsubscribe operation
+    - KVMessage:
+        - Add "SUBSCRIBE key hostname:port" to KVMessage
+            - Note that the subscribe message must contain the address of the subscribed client, because this will be stored and passed between KVServers (so the SUBSCRIBE message might not be coming from the interested client itself).
+        - Add "UNSUBSCRIBE key hostname:port" to KVMessage
+    - KVStore:
+        - Give KVStore the ability to accept incoming connections from KVServers with its own socket and port running on a new thread, so it can receive PUT_UPDATE or DELETE_SUCCESS
+        - Give KVStore the ability to send SUBSCRIBE and UNSUBSCRIBE messages. Create two methods for this and add them as a command on the UI.
+    - KVServer:
+        - Create a new HashMap called "subscribers". The keys are all the same as in "kvs", but the values are a set of strings containing the addresses of subscribed clients (e.g. "localhost:3001")
+        - Handling for SUBSCRIBE/UNSUBSCRIBE. If server not responsible for key, send SERVER_NOT_RESPONSIBLE. Key doesn't have to exist to be subscribed to.
+        - Whenever a put request from one KVServer to another is performed, it checks if there are subscribers associated with the key and for each of them sends a "SUBSCRIBE key addr" 
+- Update subscribers with all data mutations
+    - KVStore:
+        - Add handling of PUT_UPDATE and DELETE_SUCCESS messages; it might simply print.
+    - KVServer:
+        - When responding with a PUT_UPDATE or DELETE_SUCCESS message, send a copy to all subscribers associated with the key.
