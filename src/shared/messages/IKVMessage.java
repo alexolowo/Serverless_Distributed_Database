@@ -39,7 +39,10 @@ public interface IKVMessage {
 		SERVER_SHUTDOWN, /* ECS signal to shutdown server */
 		SERVER_SHUTDOWN_SUCCESS, /* Server notify ECS of shutdown success */
 		SERVER_SHUTDOWN_ERROR, /* Server notify ECS of shutdown failure */
-		HEARTBEAT /* Notify ECS of server heartbeat */
+		HEARTBEAT, /* Notify ECS of server heartbeat */
+
+		SUBSCRIBE, /* Notify KVServer of a client subscribe to key */
+		UNSUBSCRIBE /* Notify KVServer of client unsubscribe to key */
 	}
 
 	/**
