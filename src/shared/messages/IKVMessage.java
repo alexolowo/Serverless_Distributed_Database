@@ -42,7 +42,9 @@ public interface IKVMessage {
 		HEARTBEAT, /* Notify ECS of server heartbeat */
 
 		SUBSCRIBE, /* Notify KVServer of a client subscribe to key */
-		UNSUBSCRIBE /* Notify KVServer of client unsubscribe to key */
+		SUBSCRIBE_SUCCESS, /* Notify client of successful subscription */
+		UNSUBSCRIBE, /* Notify KVServer of client unsubscribe to key */
+		UNSUBSCRIBE_SUCCESS /* Notify client of successful unsubscription */
 	}
 
 	/**

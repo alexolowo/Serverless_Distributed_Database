@@ -241,7 +241,7 @@ public class KVStore implements KVCommInterface {
 	 *
 	 * @param key the key that identifies the value.
 	 * @return the value, which is indexed by the given key.
-	 * @throws Exception if put command cannot be executed
+	 * @throws Exception if get command cannot be executed
 	 * 		(e.g. not connected to any KV server).
 	 */
 	@Override
@@ -268,6 +268,74 @@ public class KVStore implements KVCommInterface {
 			String newMetadata = keyrangeRead();
 			updateReadMetadata(newMetadata);
 			return get(key);
+		}
+		return res;
+	}
+
+	/**
+	 * Subscribes to changes in a given key that happen server-side.
+	 *
+	 * @param key the key
+	 * @return SERVER_NOT_RESPONSIBLE or SUBSCRIBE_SUCCESS
+	 * @throws Exception if subscribe command cannot be executed
+	 * 		(e.g. not connected to any KV server).
+	 */
+	public KVMessage subscribe(String key) throws Exception {
+		findResponsibleServer(key, metadataRead);
+		if (!connected) {
+			throw new Exception("Not connected to a KV server.");
+		}
+		KVMessage res = null;
+		try {
+			CommProtocol.sendMessage(new KVMessage("SUBSCRIBE " + key), output);
+		} catch (IOException e) {
+			connectionLost();
+		}
+
+		try {
+			res = CommProtocol.receiveMessage(input, true);
+		} catch (IOException e) {
+			connectionLost();
+		}
+
+		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
+			String newMetadata = keyrangeRead();
+			updateReadMetadata(newMetadata);
+			return subscribe(key);
+		}
+		return res;
+	}
+
+	/**
+	 * Unsubscribes to changes in a given key that happen server-side.
+	 *
+	 * @param key the key
+	 * @return SERVER_NOT_RESPONSIBLE or UNSUBSCRIBE_SUCCESS
+	 * @throws Exception if unsubscribe command cannot be executed
+	 * 		(e.g. not connected to any KV server).
+	 */
+	public KVMessage unsubscribe(String key) throws Exception {
+		findResponsibleServer(key, metadataRead);
+		if (!connected) {
+			throw new Exception("Not connected to a KV server.");
+		}
+		KVMessage res = null;
+		try {
+			CommProtocol.sendMessage(new KVMessage("UNSUBSCRIBE " + key), output);
+		} catch (IOException e) {
+			connectionLost();
+		}
+
+		try {
+			res = CommProtocol.receiveMessage(input, true);
+		} catch (IOException e) {
+			connectionLost();
+		}
+
+		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
+			String newMetadata = keyrangeRead();
+			updateReadMetadata(newMetadata);
+			return unsubscribe(key);
 		}
 		return res;
 	}

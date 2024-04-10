@@ -12,7 +12,7 @@
 
 # Todo: Milestone 4 (notification mechanism)
 - API Extension for subscribe and unsubscribe operation
-    - KVMessage:
+    - KVMessage: (DONE)
         - Add "SUBSCRIBE key hostname:port" to KVMessage
             - Note that the subscribe message must contain the address of the subscribed client, because this will be stored and passed between KVServers (so the SUBSCRIBE message might not be coming from the interested client itself).
         - Add "UNSUBSCRIBE key hostname:port" to KVMessage
