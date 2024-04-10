@@ -96,98 +96,119 @@ public class KVClient implements IKVClient {
 		// only split by first 3 spaces
 		String[] tokens = cmdLine.trim().split("\\s+", 3);  
 
-		if(tokens[0].equals("quit")) {	
-			stop = true;
-            if (kvStore != null) {
-                kvStore.disconnect();
-            }
-			System.out.println(PROMPT + "Application exit.");
-		
-		} else if (tokens[0].equals("connect")){
-			if(tokens.length == 3) {
-				try{
-					String serverAddress = tokens[1];
-					int serverPort = Integer.parseInt(tokens[2]);
-					newConnection(serverAddress, serverPort);
-				} catch(NumberFormatException nfe) {
-					System.out.println(
-						"Not a valid address. Port must be a number.");
-					logger.info("Unable to parse argument <port>", nfe);
-				} catch(UnknownHostException e) {
-					System.out.println("Unknown Host!");
-					logger.info("Unknown Host.", e);
-				} catch(Exception e) {
-                    System.out.println("Exception:\n" + e);
-					logger.warn("Exception.", e);
-                }
-			} else {
-				System.out.println(
-					"Invalid number of parameters.\n"
-					+ "Usage: connect <hostname> <port>");
-			}
-			
-		} else if (tokens[0].equals("put")) {
-			System.out.println("_____________________KVClient PUT\n");
-			if (tokens.length == 3) {
-				if (kvStore != null && kvStore.connected) {
-					String key = tokens[1];
-					String value = tokens[2];
-					try {
-						KVMessage res = kvStore.put(key, value);
-					} catch (Exception e) {
-						logger.error(
-							"Error while putting " 
-							+ key + " : " + value
-							+ ": " + e);
+		switch(tokens[0]) {
+			case "quit":
+				stop = true;
+				if (kvStore != null) {
+					kvStore.disconnect();
+				}
+				System.out.println(PROMPT + "Application exit.");
+				break;
+			case "connect":
+				if(tokens.length == 3) {
+					try{
+						String serverAddress = tokens[1];
+						int serverPort = Integer.parseInt(tokens[2]);
+						newConnection(serverAddress, serverPort);
+					} catch(NumberFormatException nfe) {
+						System.out.println(
+							"Not a valid address. Port must be a number.");
+						logger.info("Unable to parse argument <port>", nfe);
+					} catch(UnknownHostException e) {
+						System.out.println("Unknown Host!");
+						logger.info("Unknown Host.", e);
+					} catch(Exception e) {
+						System.out.println("Exception:\n" + e);
+						logger.warn("Exception.", e);
 					}
 				} else {
-					System.out.println("Not connected to a server.");
+					System.out.println(
+						"Invalid number of parameters.\n"
+						+ "Usage: connect <hostname> <port>");
 				}
-			} else {
-				System.out.println(
-					"Invalid number of parameters. Usage: put <key> <val>");
-			}	
-		} else if (tokens[0].equals("get")) {
-			if (tokens.length == 2) {
-				if (kvStore != null && kvStore.connected) {
-					String key = tokens[1];
-					try {
-						KVMessage res = kvStore.get(key);
-					} catch (Exception e) {
-						logger.error("Unable to get " + key);
+				break;
+			case "put":
+				if (tokens.length == 3) {
+					if (kvStore != null && kvStore.connected) {
+						String key = tokens[1];
+						String value = tokens[2];
+						try {
+							KVMessage res = kvStore.put(key, value);
+						} catch (Exception e) {
+							logger.error(
+								"Error while putting " 
+								+ key + " : " + value
+								+ ": " + e);
+						}
+					} else {
+						System.out.println("Not connected to a server.");
 					}
+				} else {
+					System.out.println(
+						"Invalid number of parameters. Usage: put <key> <val>");
+				}	
+				break;
+			case "get":
+				if (tokens.length == 2) {
+					if (kvStore != null && kvStore.connected) {
+						String key = tokens[1];
+						try {
+							KVMessage res = kvStore.get(key);
+						} catch (Exception e) {
+							logger.error("Unable to get " + key);
+						}
+
+					} else {
+						System.out.println("Not connected to a server.");
+					}
+				} else {
+					System.out.println(
+						"Invalid number of parameters. Usage: get <key>");
+				}
+				break;
+			case "subscribe":
+				if (tokens.length == 2) {
 
 				} else {
-					System.out.println("Not connected to a server.");
+					System.out.println(
+						"Invalid number of parameters. Usage: subscribe <key>");
 				}
-			} else {
-				System.out.println(
-					"Invalid number of parameters. Usage: get <key>");
-			}	
-		} else if(tokens[0].equals("disconnect")) {
-			if (kvStore != null) {
-				kvStore.disconnect();
-				kvStore = null;
-			}
-		} else if(tokens[0].equals("logLevel")) {
-			if(tokens.length == 2) {
-				String level = setLevel(tokens[1]);
-				if (level.equals(LogSetup.UNKNOWN_LEVEL)) {
-                    System.out.println("Not a valid log level.");
-					System.out.println(LogSetup.getPossibleLogLevels());
+				break;
+			case "unsubscribe":
+				if (tokens.length == 2) {
+
 				} else {
-					System.out.println(PROMPT + 
-							"Log level changed to level " + level);
+					System.out.println(
+						"Invalid number of parameters. Usage: subscribe <key>");
 				}
-			} else {
-                System.out.println("Invalid number of parameters.");
-			}
-		} else if(tokens[0].equals("help")) {
-		 	printHelp();
-		} 
-        else {
-			System.out.println("Unknown command");
-			printHelp();
+				break;
+			case "disconnect":
+				if (kvStore != null) {
+					kvStore.disconnect();
+					kvStore = null;
+				}
+				break;
+			case "logLevel":
+				if(tokens.length == 2) {
+					String level = setLevel(tokens[1]);
+					if (level.equals(LogSetup.UNKNOWN_LEVEL)) {
+						System.out.println("Not a valid log level.");
+						System.out.println(LogSetup.getPossibleLogLevels());
+					} else {
+						System.out.println(PROMPT + 
+								"Log level changed to level " + level);
+					}
+				} else {
+					System.out.println("Invalid number of parameters.");
+				}
+				break;
+			case "help":
+				printHelp();
+				break;
+			default:
+				System.out.println("Unknown command");
+				printHelp();
+				break;
 		}
 	}
 
@@ -207,6 +228,10 @@ public class KVClient implements IKVClient {
 		sb.append("\t sends a get request to the storage server \n");
 		sb.append(PROMPT).append("disconnect");
 		sb.append("\t\t disconnects from the server \n");
+		sb.append(PROMPT).append("subscribe <key>");
+		sb.append("\t sends a subscribe request to the storage server \n");
+		sb.append(PROMPT).append("unsubscribe <key>");
+		sb.append("\t sends an unsubscribe request to the storage server \n");
 		
 		sb.append(PROMPT).append("logLevel");
 		sb.append("\t\t changes the logLevel \n");
@@ -276,14 +301,6 @@ public class KVClient implements IKVClient {
      * @param args are unused in the client application.
      */
     public static void main(String[] args) {
-		// try {
-		// 	// new LogSetup("logs/client.log", Level.ALL);
-		// 	PerformanceEvaluation pe = new PerformanceEvaluation();
-		// 	pe.MS2Experiment();
-
-		// } catch (Exception e) {
-		// 	System.exit(1);
-		// }
     	try {
 			new LogSetup("logs/client.log", Level.ALL);
 			KVClient app = new KVClient();
