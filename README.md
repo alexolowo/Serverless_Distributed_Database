@@ -16,7 +16,7 @@
         - Add "SUBSCRIBE key hostname:port" to KVMessage
             - Note that the subscribe message must contain the address of the subscribed client, because this will be stored and passed between KVServers (so the SUBSCRIBE message might not be coming from the interested client itself).
         - Add "UNSUBSCRIBE key hostname:port" to KVMessage
-    - KVStore:
+    - KVStore: (DONE)
         - Give KVStore the ability to accept incoming connections from KVServers with its own socket and port running on a new thread, so it can receive PUT_UPDATE or DELETE_SUCCESS
         - Give KVStore the ability to send SUBSCRIBE and UNSUBSCRIBE messages. Create two methods for this and add them as a command on the UI.
     - KVServer:

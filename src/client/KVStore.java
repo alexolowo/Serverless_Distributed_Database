@@ -37,6 +37,10 @@ public class KVStore implements KVCommInterface {
 
 	public String address;
 	public int port;
+
+	public String serverSockAddr;
+	public int serverSockPort;
+
 	private Map<String, BigInteger[]> metadata;
 	private Map<String, BigInteger[]> metadataRead;
 
@@ -50,10 +54,19 @@ public class KVStore implements KVCommInterface {
 	public KVStore(String address, int port) {
 		this.address = address;
 		this.port = port;
-		metadata = new HashMap<String, BigInteger[]>();
-		metadata.put(address+":"+port, new BigInteger[]{BigInteger.ZERO, BigInteger.ONE.shiftLeft(128)});
-		metadataRead = new HashMap<String, BigInteger[]>(metadata);
+
+		// add KVClient ui as listener
 		listeners = new HashSet<KVClient>();
+
+		// setup metadata assuming only 1 kvserver
+		metadata = new HashMap<String, BigInteger[]>();
+		metadata.put(
+			address+":"+port, 
+			new BigInteger[]{BigInteger.ZERO, BigInteger.ONE.shiftLeft(128)});
+		metadataRead = new HashMap<String, BigInteger[]>(metadata);
+
+		// setup server socket thread
+		new Thread(new KVStoreServerSocket(this)).start();
 	}
 
 	/**
@@ -287,7 +300,8 @@ public class KVStore implements KVCommInterface {
 		}
 		KVMessage res = null;
 		try {
-			CommProtocol.sendMessage(new KVMessage("SUBSCRIBE " + key), output);
+			String msgStr = "SUBSCRIBE " + key + " " + serverSockAddr + ":" + serverSockPort;
+			CommProtocol.sendMessage(new KVMessage(msgStr), output);
 		} catch (IOException e) {
 			connectionLost();
 		}
@@ -321,7 +335,8 @@ public class KVStore implements KVCommInterface {
 		}
 		KVMessage res = null;
 		try {
-			CommProtocol.sendMessage(new KVMessage("UNSUBSCRIBE " + key), output);
+			String msgStr = "UNSUBSCRIBE " + key + " " + serverSockAddr + ":" + serverSockPort;
+			CommProtocol.sendMessage(new KVMessage(msgStr), output);
 		} catch (IOException e) {
 			connectionLost();
 		}

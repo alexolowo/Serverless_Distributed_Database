@@ -168,6 +168,16 @@ public class KVClient implements IKVClient {
 				break;
 			case "subscribe":
 				if (tokens.length == 2) {
+					if (kvStore != null && kvStore.connected) {
+						String key = tokens[1];
+						try {
+							KVMessage res = kvStore.subscribe(key);
+						} catch (Exception e) {
+							logger.error("Unable to subscribe to " + key);
+						}
+					} else {
+						System.out.println("Not connected to a server.");
+					}
 
 				} else {
 					System.out.println(
@@ -176,6 +186,16 @@ public class KVClient implements IKVClient {
 				break;
 			case "unsubscribe":
 				if (tokens.length == 2) {
+					if (kvStore != null && kvStore.connected) {
+						String key = tokens[1];
+						try {
+							KVMessage res = kvStore.unsubscribe(key);
+						} catch (Exception e) {
+							logger.error("Unable to unsubscribe from " + key);
+						}
+					} else {
+						System.out.println("Not connected to a server.");
+					}
 
 				} else {
 					System.out.println(
