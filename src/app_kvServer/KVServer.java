@@ -2,6 +2,9 @@ package app_kvServer;
 
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -12,9 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.math.BigInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -31,6 +31,8 @@ import shared.messages.CommProtocol;
 import shared.messages.IKVMessage.StatusType;
 import shared.Hash;
 
+import static shared.messages.IKVMessage.StatusType.UNSUBSCRIBE;
+
 public class KVServer extends Thread implements IKVServer {
 
 	private static Logger logger = Logger.getRootLogger();
@@ -44,6 +46,7 @@ public class KVServer extends Thread implements IKVServer {
 	private Map<String, String> kvs_rep1;
 	private Map<String, String> kvs_rep2;
 	private Map<String, BigInteger[]> metadata;
+	private Map<String, String> subscribers;
 
 	private int cacheSize;
 	private String cacheStrategy;
@@ -97,6 +100,7 @@ public class KVServer extends Thread implements IKVServer {
 
 		// initialize new metadata hashmap
 		metadata = new HashMap<String, BigInteger[]>();
+		subscribers = new HashMap<String, String>();
 
 		// add shutdown hook to invoke close() on Ctrl+C
 		Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -551,9 +555,9 @@ public class KVServer extends Thread implements IKVServer {
 			for (Map.Entry<String, String> k : kvsToRecover.entrySet()) {
 				logger.info("Putting " + k.getKey() + " into own storage");
 				kvs.put(k.getKey(), k.getValue());
-				if (replica1 != null) 
+				if (replica1 != null)
 					replica1.putToReplica(k.getKey(), k.getValue());
-				if (replica2 != null) 
+				if (replica2 != null)
 					replica2.putToReplica(k.getKey(), k.getValue());
 			}
 			writeToStorage(kvs, dataPath);
@@ -602,7 +606,7 @@ public class KVServer extends Thread implements IKVServer {
 			if (coord2Addr != null && !metadata.keySet().contains(coord2Addr)) {
 				moveRepToMain(coord2Addr);
 			}
-		} 
+		}
 
 		// todo cleanup
 
@@ -617,7 +621,7 @@ public class KVServer extends Thread implements IKVServer {
 		}
 		if (coord2Addr != null && coord2Addr.equals(newCoord1Addr)) {
 			kvs_rep1 = new HashMap<String, String>(kvs_rep2);
-			writeToStorage(kvs_rep1, replica1DataPath);			
+			writeToStorage(kvs_rep1, replica1DataPath);
 			kvs_rep2.clear();
 			writeToStorage(kvs_rep2, replica1DataPath);
 		} else if (newCoord2Addr == null || coord2Addr != null && !coord2Addr.equals(newCoord2Addr)) {
@@ -770,16 +774,16 @@ public class KVServer extends Thread implements IKVServer {
 		return metadataStr.toString();
 	}
 
-	 /**
+	/**
 	 * Takes metadata map and puts it into the metadata
 	 * string format:
 	 * KEYRANGE_START,KEYRANGE_END,ADDR:PORT;...
 	 * 
 	 * Where the key ranges are the valid read keyranges
 	 * rather than write keyranges.
-	  * 
-	  * @return metadata string
-	  */
+	 * 
+	 * @return metadata string
+	 */
 	public String serializeReadMetadata() {
 		StringBuilder metadataStr = new StringBuilder();
 		r.lock();
@@ -809,10 +813,42 @@ public class KVServer extends Thread implements IKVServer {
 	}
 
 	/**
+	 * Updates all subscribers subscribed to a key with res
+	 * 
+	 * @param key
+	 * @param res
+	 */
+	private void updateSubscribers(String key, KVMessage res) {
+		// checking if the key is subscribed to and notify all subscribers if so
+		if (subscribers.containsKey(key)) {
+			String[] subscribersList = subscribers.get(key).split(",");
+			for (String subscriber : subscribersList) {
+				try {
+					String[] subscriberInfo = subscriber.split(":");
+					String subscriberAddr = subscriberInfo[0];
+					int subscriberPort = Integer.parseInt(subscriberInfo[1]);
+
+					logger.info("Updating subscriber " + subscriberAddr + ":" + subscriberPort);
+					Socket subscriberSock = new Socket(subscriberAddr, subscriberPort);
+					OutputStream subscriberOut = subscriberSock.getOutputStream();
+	
+					CommProtocol.sendMessage(res, subscriberOut);
+	
+					subscriberOut.close();
+					subscriberSock.close();
+				} catch (IOException ioe) {
+					logger.error("Failed to update subscriber", ioe);
+				}
+			}
+		}
+
+	}
+
+	/**
 	 * Directs put requests to the right place.
 	 * 
-	 * @param kvs which set of kvs to modify: kvs, kvs_rep1, or kvs_rep2
-	 * @param key key to put
+	 * @param kvs   which set of kvs to modify: kvs, kvs_rep1, or kvs_rep2
+	 * @param key   key to put
 	 * @param value value to put
 	 * @return KVMessage with info about result
 	 */
@@ -849,7 +885,8 @@ public class KVServer extends Thread implements IKVServer {
 							StatusType.PUT_UPDATE.name()
 									+ " " + key
 									+ " " + value);
-				} else {
+				}
+				else {
 					res = new KVMessage(
 							StatusType.PUT_SUCCESS.name()
 									+ " " + key
@@ -863,6 +900,7 @@ public class KVServer extends Thread implements IKVServer {
 							+ " " + value);
 			logger.error("Error: " + e);
 		}
+		updateSubscribers(key, res);
 		return res;
 	}
 
@@ -908,7 +946,7 @@ public class KVServer extends Thread implements IKVServer {
 	 * keys to other servers
 	 *
 	 * @throws Exception when rebalancing keys to another
-	 * server fails
+	 *                   server fails
 	 */
 	public void rebalance() throws Exception {
 		List<String> keysToRemove = new ArrayList<String>();
@@ -956,6 +994,15 @@ public class KVServer extends Thread implements IKVServer {
 							throw new Exception(
 									"Put " + k + " to " + server + " failed!");
 						}
+						if (subscribers.containsKey(k)) {
+							String[] subscribersList = subscribers.get(k).split(",");
+							for (String subscriber: subscribersList) {
+								String[] subscriberInfo = subscriber.split(":");
+								String subscriberAddr = subscriberInfo[0];
+								int subscriberPort = Integer.parseInt(subscriberInfo[1]);
+								client.subscribeAnyClient(k, subscriberAddr, subscriberPort);
+							}
+						}
 						keysToRemove.add(k);
 					}
 					client.disconnect();
@@ -968,6 +1015,8 @@ public class KVServer extends Thread implements IKVServer {
 			// Don't delete keys right away; delete after
 			for (String k : keysToRemove) {
 				kvs.remove(k);
+				// remove key from subscribers list
+				subscribers.remove(k);
 			}
 			writeToStorage(kvs, dataPath);
 
@@ -1031,7 +1080,7 @@ public class KVServer extends Thread implements IKVServer {
 		}
 	}
 
-		/**
+	/**
 	 * Handles incoming KVMessages with the correct actions and
 	 * formulates responses to send back to the client.
 	 *
@@ -1148,6 +1197,73 @@ public class KVServer extends Thread implements IKVServer {
 								StatusType.SERVER_NOT_RESPONSIBLE.name());
 						logger.info(e);
 					}
+				}
+				break;
+			case SUBSCRIBE:
+				try {
+					BigInteger[] kr = metadata.get(this.address + ":" + this.port);
+					boolean responsibleForKey = kr != null &&
+							Hash.inHashRange(key, kr[0], kr[1]);
+					if (startedBySelf || responsibleForKey) {
+						StringBuilder subscribers_string = new StringBuilder();
+						// if key is not already subscribed to
+						if (!subscribers.containsKey(key)) {
+							subscribers.put(key, subscribers_string.append(value).toString());
+							// if key is subscribed to and the subscriber is not already part of subscribers
+						} else if (subscribers.containsKey(key) &&
+								!subscribers.get(key).contains(value)) {
+							subscribers_string.append(subscribers.get(key))
+									.append(",")
+									.append(value);
+							subscribers.put(key, subscribers_string.toString());
+							// otherwise key is subscribed to and the subscriber is already part of subscribers
+						}
+						logger.info("Subscribers of " + key + " updated to: " + subscribers.get(key));
+						res = new KVMessage(
+								"SUBSCRIBE_SUCCESS " + key + " " + value);
+					} else {
+						logger.info("Server is not responsible for subscriptions to " + key);
+						res = new KVMessage(
+								StatusType.SERVER_NOT_RESPONSIBLE.name());
+					}
+				} catch (Exception e) {
+					logger.error("Subscription Error (SUBSCRIBE)", e);
+					res = new KVMessage(
+							"FAILURE Subscribe failure due to unknown subscription type.");
+				}
+				break;
+			case UNSUBSCRIBE:
+				try {
+					BigInteger[] kr = metadata.get(this.address + ":" + this.port);
+					boolean responsibleForKey = kr != null &&
+							Hash.inHashRange(key, kr[0], kr[1]);
+					if (startedBySelf || responsibleForKey) {
+						// contains the key and the client trying to unsubscribe is subscribed
+						if (subscribers.containsKey(key) && subscribers.get(key).contains(value)) {
+							StringBuilder subscribers_string = new StringBuilder();
+							String[] subscribersList = subscribers.get(key).split(",");
+							for (String subscriber : subscribersList) {
+								if (!subscriber.equals(value)) {
+									subscribers_string.append(subscriber).append(",");
+								}
+							}
+							subscribers.put(key, subscribers_string.toString());
+							logger.info("Subscribers of " + key + " updated to: " + subscribers.get(key));
+						} else {
+							// or not subscribed/does not contain key
+							logger.info(key + " not subscribed to by client " + value);
+						}
+						res = new KVMessage(
+								"UNSUBSCRIBE_SUCCCESS " + key + " " + value);
+					} else {
+						logger.info("Server is not responsible for subscriptions to " + key);
+						res = new KVMessage(
+								StatusType.SERVER_NOT_RESPONSIBLE.name());
+					}
+				} catch (Exception e) {
+					logger.error("Subscription Error (UNSUBSCRIBE)", e);
+					res = new KVMessage(
+							"UNSUBSCRIBE Failure due to unknown subscription type.");
 				}
 				break;
 			default:

@@ -44,8 +44,8 @@ public interface IKVMessage {
 		SUBSCRIBE, /* Notify KVServer of a client subscribe to key */
 		SUBSCRIBE_SUCCESS, /* Notify client of successful subscription */
 		UNSUBSCRIBE, /* Notify KVServer of client unsubscribe to key */
-		UNSUBSCRIBE_SUCCESS /* Notify client of successful unsubscription */
-	}
+		UNSUBSCRIBE_SUCCESS /* Notify client of successful unsubscription */;
+    }
 
 	/**
 	 * @return the key that is associated with this message, 
