@@ -514,6 +514,10 @@ public class KVServer extends Thread implements IKVServer {
 		}
 	}
 
+	public Map<String, String> getSubscribers() {
+		return subscribers;
+	}
+
 	/**
 	 * Gets order of nodes by position in hash ring from metadata
 	 * 
@@ -911,7 +915,7 @@ public class KVServer extends Thread implements IKVServer {
 	 * 
 	 * @return a map of servers with keys to send to them
 	 */
-	private Map<String, List<String>> createServerKeyBins() {
+	private Map<String, List<String>> createServerKeyBins(Map<String, String> kvPairs) {
 		Map<String, List<String>> serverKeys = new HashMap<String, List<String>>();
 
 		r.lock();
@@ -922,7 +926,7 @@ public class KVServer extends Thread implements IKVServer {
 				serverKeys.put(server, new ArrayList<String>());
 			}
 
-			for (String key : kvs.keySet()) {
+			for (String key : kvPairs.keySet()) {
 				for (String server : metadata.keySet()) {
 					// if keyHash in keyrange of server,
 					// then add it to this server's bin
@@ -950,6 +954,7 @@ public class KVServer extends Thread implements IKVServer {
 	 */
 	public void rebalance() throws Exception {
 		List<String> keysToRemove = new ArrayList<String>();
+		List<String> keysToRemoveFromSubscribers = new ArrayList<String>();
 
 		w.lock();
 
@@ -963,9 +968,11 @@ public class KVServer extends Thread implements IKVServer {
 				replica2.disconnect();
 
 			// map of which keys go to which servers
-			Map<String, List<String>> serverKeys = createServerKeyBins();
+			Map<String, List<String>> serverKeys = createServerKeyBins(kvs);
+			Map<String, List<String>> subscriberKeys = createServerKeyBins(subscribers);
 
 			logger.info("New server keys: " + serverKeys);
+			logger.info("New subscriber keys: " + subscriberKeys);
 
 			// go through each key
 			// see which keys need to be sent to other servers
@@ -994,16 +1001,17 @@ public class KVServer extends Thread implements IKVServer {
 							throw new Exception(
 									"Put " + k + " to " + server + " failed!");
 						}
-						if (subscribers.containsKey(k)) {
-							String[] subscribersList = subscribers.get(k).split(",");
-							for (String subscriber: subscribersList) {
-								String[] subscriberInfo = subscriber.split(":");
-								String subscriberAddr = subscriberInfo[0];
-								int subscriberPort = Integer.parseInt(subscriberInfo[1]);
-								client.subscribeAnyClient(k, subscriberAddr, subscriberPort);
-							}
-						}
 						keysToRemove.add(k);
+					}
+					for (String k: subscriberKeys.get(server)) {
+						String[] subscribersList = subscribers.get(k).split(",");
+						for (String subscriber: subscribersList) {
+							String[] subscriberInfo = subscriber.split(":");
+							String subscriberAddr = subscriberInfo[0];
+							int subscriberPort = Integer.parseInt(subscriberInfo[1]);
+							client.subscribeAnyClient(k, subscriberAddr, subscriberPort);
+						}
+						keysToRemoveFromSubscribers.add(k);
 					}
 					client.disconnect();
 				}
@@ -1015,10 +1023,13 @@ public class KVServer extends Thread implements IKVServer {
 			// Don't delete keys right away; delete after
 			for (String k : keysToRemove) {
 				kvs.remove(k);
-				// remove key from subscribers list
-				subscribers.remove(k);
 			}
 			writeToStorage(kvs, dataPath);
+
+
+			for (String k : keysToRemoveFromSubscribers) {
+				subscribers.remove(k);
+			}
 
 			w.unlock();
 		}
@@ -1208,13 +1219,13 @@ public class KVServer extends Thread implements IKVServer {
 						StringBuilder subscribers_string = new StringBuilder();
 						// if key is not already subscribed to
 						if (!subscribers.containsKey(key)) {
-							subscribers.put(key, subscribers_string.append(value).toString());
+							subscribers.put(key, subscribers_string.append(value).append(",").toString());
 							// if key is subscribed to and the subscriber is not already part of subscribers
 						} else if (subscribers.containsKey(key) &&
 								!subscribers.get(key).contains(value)) {
 							subscribers_string.append(subscribers.get(key))
-									.append(",")
-									.append(value);
+									.append(value)
+									.append(",");
 							subscribers.put(key, subscribers_string.toString());
 							// otherwise key is subscribed to and the subscriber is already part of subscribers
 						}
@@ -1231,6 +1242,7 @@ public class KVServer extends Thread implements IKVServer {
 					res = new KVMessage(
 							"FAILURE Subscribe failure due to unknown subscription type.");
 				}
+				logger.info("Subscribers: " + subscribers);
 				break;
 			case UNSUBSCRIBE:
 				try {
@@ -1247,14 +1259,19 @@ public class KVServer extends Thread implements IKVServer {
 									subscribers_string.append(subscriber).append(",");
 								}
 							}
-							subscribers.put(key, subscribers_string.toString());
-							logger.info("Subscribers of " + key + " updated to: " + subscribers.get(key));
+							if (subscribers_string.toString().isEmpty()) {
+								subscribers.remove(key);
+								logger.info("No more clients subscribed to " + key);
+							} else {
+								subscribers.put(key, subscribers_string.toString());
+								logger.info("Subscribers of " + key + " updated to: " + subscribers.get(key));
+							}
 						} else {
 							// or not subscribed/does not contain key
 							logger.info(key + " not subscribed to by client " + value);
 						}
 						res = new KVMessage(
-								"UNSUBSCRIBE_SUCCCESS " + key + " " + value);
+								"UNSUBSCRIBE_SUCCESS " + key + " " + value);
 					} else {
 						logger.info("Server is not responsible for subscriptions to " + key);
 						res = new KVMessage(
@@ -1263,8 +1280,9 @@ public class KVServer extends Thread implements IKVServer {
 				} catch (Exception e) {
 					logger.error("Subscription Error (UNSUBSCRIBE)", e);
 					res = new KVMessage(
-							"UNSUBSCRIBE Failure due to unknown subscription type.");
+							"FAILURE Unsubcribe failure due to unknown subscription type.");
 				}
+				logger.info("Subscribers: " + subscribers);
 				break;
 			default:
 				res = new KVMessage(
