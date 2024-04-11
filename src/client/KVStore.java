@@ -250,15 +250,14 @@ public class KVStore implements KVCommInterface {
 	}
 
 	/**
-	 * Retrieves the value for a given key from the KVServer.
-	 *
-	 * @param key the key that identifies the value.
-	 * @return the value, which is indexed by the given key.
-	 * @throws Exception if get command cannot be executed
-	 * 		(e.g. not connected to any KV server).
+	 * Logic for GET, SUBSCRIBE, and UNSUBSCRIBE requests
+	 * 
+	 * @param key
+	 * @param msgStr
+	 * @return
+	 * @throws Exception
 	 */
-	@Override
-	public KVMessage get(String key) throws Exception {
+	public KVMessage getSkeleton(String key, String msgStr) throws Exception {
 		findResponsibleServer(key, metadataRead);
 		if (!connected) {
 			throw new Exception("Not connected to a KV server.");
@@ -266,7 +265,7 @@ public class KVStore implements KVCommInterface {
 
 		KVMessage res = null;
 		try {
-			CommProtocol.sendMessage(new KVMessage("GET " + key), output);
+			CommProtocol.sendMessage(new KVMessage(msgStr), output);
 		} catch (IOException e) {
 			connectionLost();
 		}
@@ -280,9 +279,22 @@ public class KVStore implements KVCommInterface {
 		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
 			String newMetadata = keyrangeRead();
 			updateReadMetadata(newMetadata);
-			return get(key);
+			return getSkeleton(key, msgStr);
 		}
 		return res;
+	}
+
+	/**
+	 * Retrieves the value for a given key from the KVServer.
+	 *
+	 * @param key the key that identifies the value.
+	 * @return the value, which is indexed by the given key.
+	 * @throws Exception if get command cannot be executed
+	 * 		(e.g. not connected to any KV server).
+	 */
+	@Override
+	public KVMessage get(String key) throws Exception {
+		return getSkeleton(key, "GET " + key);
 	}
 
 	/**
@@ -294,30 +306,22 @@ public class KVStore implements KVCommInterface {
 	 * 		(e.g. not connected to any KV server).
 	 */
 	public KVMessage subscribe(String key) throws Exception {
-		findResponsibleServer(key, metadataRead);
-		if (!connected) {
-			throw new Exception("Not connected to a KV server.");
-		}
-		KVMessage res = null;
-		try {
-			String msgStr = "SUBSCRIBE " + key + " " + serverSockAddr + ":" + serverSockPort;
-			CommProtocol.sendMessage(new KVMessage(msgStr), output);
-		} catch (IOException e) {
-			connectionLost();
-		}
+		return subscribeAnyClient(key, serverSockAddr, serverSockPort);
+	}
 
-		try {
-			res = CommProtocol.receiveMessage(input, true);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
-			String newMetadata = keyrangeRead();
-			updateReadMetadata(newMetadata);
-			return subscribe(key);
-		}
-		return res;
+	/**
+	 * Subscribes to changes in a given key that happen server-side.
+	 *
+	 * @param key the key
+	 * @param addr addr of client to subscribe
+	 * @param port port of client to subscribe
+	 * @return SERVER_NOT_RESPONSIBLE or SUBSCRIBE_SUCCESS
+	 * @throws Exception if subscribe command cannot be executed
+	 * 		(e.g. not connected to any KV server).
+	 */
+	public KVMessage subscribeAnyClient(
+			String key, String addr, int port) throws Exception {
+		return getSkeleton(key, "SUBSCRIBE " + key + " " + addr + ":" + port);
 	}
 
 	/**
@@ -329,30 +333,22 @@ public class KVStore implements KVCommInterface {
 	 * 		(e.g. not connected to any KV server).
 	 */
 	public KVMessage unsubscribe(String key) throws Exception {
-		findResponsibleServer(key, metadataRead);
-		if (!connected) {
-			throw new Exception("Not connected to a KV server.");
-		}
-		KVMessage res = null;
-		try {
-			String msgStr = "UNSUBSCRIBE " + key + " " + serverSockAddr + ":" + serverSockPort;
-			CommProtocol.sendMessage(new KVMessage(msgStr), output);
-		} catch (IOException e) {
-			connectionLost();
-		}
+		return unsubscribeAnyClient(key, serverSockAddr, serverSockPort);
+	}
 
-		try {
-			res = CommProtocol.receiveMessage(input, true);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
-			String newMetadata = keyrangeRead();
-			updateReadMetadata(newMetadata);
-			return unsubscribe(key);
-		}
-		return res;
+	/**
+	 * Unsubscribes to changes in a given key that happen server-side.
+	 *
+	 * @param key the key
+	 * @param addr addr of client to unsubscribe
+	 * @param port port of client to unsubscribe
+	 * @return SERVER_NOT_RESPONSIBLE or UNSUBSCRIBE_SUCCESS
+	 * @throws Exception if unsubscribe command cannot be executed
+	 * 		(e.g. not connected to any KV server).
+	 */
+	public KVMessage unsubscribeAnyClient(
+			String key, String addr, int port) throws Exception {
+		return getSkeleton(key, "UNSUBSCRIBE " + key + " " + addr + ":" + port);
 	}
 
 	/**
