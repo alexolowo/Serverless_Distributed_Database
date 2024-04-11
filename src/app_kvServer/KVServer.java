@@ -31,6 +31,8 @@ import shared.messages.CommProtocol;
 import shared.messages.IKVMessage.StatusType;
 import shared.Hash;
 
+import static shared.messages.IKVMessage.StatusType.UNSUBSCRIBE;
+
 public class KVServer extends Thread implements IKVServer {
 
 	private static Logger logger = Logger.getRootLogger();
@@ -69,6 +71,8 @@ public class KVServer extends Thread implements IKVServer {
 	public KVReplica replica1;
 	public KVReplica replica2;
 
+	private HashMap<String, String> subscribers;
+
 	private final ReentrantReadWriteLock rwl = new ReentrantReadWriteLock();
 	private final Lock r = rwl.readLock();
 	private final Lock w = rwl.writeLock();
@@ -97,6 +101,7 @@ public class KVServer extends Thread implements IKVServer {
 
 		// initialize new metadata hashmap
 		metadata = new HashMap<String, BigInteger[]>();
+		subscribers = new HashMap<String, String>();
 
 		// add shutdown hook to invoke close() on Ctrl+C
 		Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -341,6 +346,18 @@ public class KVServer extends Thread implements IKVServer {
 			}
 			kvs.put(key, value);
 			writeToStorage(kvs, dataPath);
+
+			// checking if the key is subscribed to and notify all subscribers if so
+			if (subscribers.containsKey(key)) {
+				String[] subscriberInfo = subscribers.get(key).split(",");
+				for (String subscriber : subscriberInfo) {
+					String[] subscriberAddr = subscriber.split(":");
+					CommProtocol.sendMessage(new KVMessage(
+							StatusType.PUT_SUCCESS.name()
+									+ " " + key
+									+ " " + value), new Socket(subscriberAddr[0], Integer.parseInt(subscriberAddr[1])).getOutputStream());
+				}
+			}
 		} finally {
 			w.unlock();
 		}
@@ -832,6 +849,21 @@ public class KVServer extends Thread implements IKVServer {
 					res = new KVMessage(
 							StatusType.DELETE_SUCCESS.name()
 									+ " " + key);
+
+					// checking if the key is subscribed to and notify all subscribers if so
+					if (subscribers.containsKey(key)) {
+						String[] subscriberInfo = subscribers.get(key).split(",");
+						for (String subscriber : subscriberInfo) {
+							String[] subscriberAddr = subscriber.split(":");
+							CommProtocol.sendMessage(new KVMessage(
+									StatusType.DELETE_SUCCESS.name()
+											+ " " + key
+											+ " " + value), new Socket(subscriberAddr[0], Integer.parseInt(subscriberAddr[1])).getOutputStream());
+						}
+						// since the key is deleted, remove it from the subscribers list? A key can be subscribed to without it existing though
+						//subscribers.remove(key);
+					}
+
 				} catch (Exception e) {
 					logger.error("Error: ", e);
 					res = new KVMessage(
@@ -849,6 +881,19 @@ public class KVServer extends Thread implements IKVServer {
 							StatusType.PUT_UPDATE.name()
 									+ " " + key
 									+ " " + value);
+
+					// checking if the key is subscribed to and notify all subscribers if so
+					if (subscribers.containsKey(key)) {
+						String[] subscriberInfo = subscribers.get(key).split(",");
+						for (String subscriber : subscriberInfo) {
+							String[] subscriberAddr = subscriber.split(":");
+							CommProtocol.sendMessage(new KVMessage(
+									StatusType.PUT_UPDATE.name()
+											+ " " + key
+											+ " " + value), new Socket(subscriberAddr[0], Integer.parseInt(subscriberAddr[1])).getOutputStream());
+						}
+					}
+
 				} else {
 					res = new KVMessage(
 							StatusType.PUT_SUCCESS.name()
@@ -951,6 +996,17 @@ public class KVServer extends Thread implements IKVServer {
 
 					for (String k : serverKeys.get(server)) {
 						KVMessage res = client.put(k, kvs.get(k));
+
+						// checking if the key is subscribed to
+						if (subscribers.containsKey(k)) {
+							String[] subscriberInfo = subscribers.get(k).split(":");
+							String subscriberAddr = subscriberInfo[0];
+							int subscriberPort = Integer.parseInt(subscriberInfo[1]);
+							KVStore subscriber = new KVStore(subscriberAddr, subscriberPort);
+							subscriber.connect();
+							subscriber.subscribe(k);
+							subscriber.disconnect();
+						}
 						if (res.getStatus() == StatusType.PUT_ERROR) {
 							client.disconnect();
 							throw new Exception(
@@ -968,6 +1024,8 @@ public class KVServer extends Thread implements IKVServer {
 			// Don't delete keys right away; delete after
 			for (String k : keysToRemove) {
 				kvs.remove(k);
+				// remove key from subscribers list
+				subscribers.remove(k);
 			}
 			writeToStorage(kvs, dataPath);
 
@@ -1148,6 +1206,73 @@ public class KVServer extends Thread implements IKVServer {
 								StatusType.SERVER_NOT_RESPONSIBLE.name());
 						logger.info(e);
 					}
+				}
+				break;
+			case SUBSCRIBE:
+				try {
+					if(kvs.containsKey(msg.getKey())) {
+						StringBuilder subscribers_string = new StringBuilder();
+						// if the key is not already subscribed to
+						if(!subscribers.containsKey(msg.getKey())) {
+							subscribers.put(msg.getKey(), subscribers_string.append(msg.getValue()).toString());
+							res = new KVMessage(
+									StatusType.SUBSCRIBE_SUCCESS.name());
+						// if the key is subscribed to and the subscriber is not already a part of those subscribed
+						} else if (subscribers.containsKey(msg.getKey()) && !subscribers.get(msg.getKey()).contains(msg.getValue())) {
+							subscribers_string.append(subscribers.get(msg.getKey()))
+									.append(",")
+									.append(msg.getValue());
+							subscribers.put(msg.getKey(), subscribers_string.toString());
+							res = new KVMessage(
+									"SUBSCRIPTION UPDATE: " + "Client " + msg.getValue() + " is now subscribed.");
+						// if the key is subscribed to and the subscriber is already a part of those subscribed
+						} else {
+							res = new KVMessage(
+									"SUBSCRIPTION UPDATE: " + "Client " + msg.getValue() + " is already subscribed.");
+						}
+					} else {
+						res = new KVMessage(
+								StatusType.SERVER_NOT_RESPONSIBLE.name());
+					}
+				}
+				catch (Exception e) {
+					logger.error("Subscription Error (SUBSCRIBE)", e);
+					res = new KVMessage(
+							"SUBSCRIBE Failure due to unknown subscription type.");
+				}
+				break;
+			case UNSUBSCRIBE:
+				try {
+					if (kvs.containsKey(msg.getKey())) {
+						// does not contain the key/ key is not being subscribed to
+						if (!subscribers.containsKey(msg.getKey())) {
+							res = new KVMessage(
+									"UNSUBSCRIBE UPDATE: " + "Key " + msg.getKey() + " is not being subscribed to.");
+						// contains the key and the client trying to unsubscribe is subscribed
+						} else if (subscribers.containsKey(msg.getKey()) && subscribers.get(msg.getKey()).contains(msg.getValue())) {
+							StringBuilder subscribers_string = new StringBuilder();
+							String[] subscribers_list = subscribers.get(msg.getKey()).split(",");
+							for (String subscriber : subscribers_list) {
+								if (!subscriber.equals(msg.getValue())) {
+									subscribers_string.append(subscriber).append(",");
+								}
+							}
+							subscribers.put(msg.getKey(), subscribers_string.toString());
+							res = new KVMessage(
+									"UNSUBSCRIBE UPDATE: " + "Client " + msg.getValue() + " is now unsubscribed.");
+						// contains the key but the client trying to unsubscribe is not subscribed
+						} else {
+							res = new KVMessage(
+									"UNSUBSCRIBE UPDATE: " + "Client " + msg.getValue() + " is not subscribed.");
+						}
+					} else {
+						res = new KVMessage(
+								StatusType.SERVER_NOT_RESPONSIBLE.name());
+					}
+				} catch(Exception e){
+					logger.error("Subscription Error (UNSUBSCRIBE)", e);
+					res = new KVMessage(
+							"UNSUBSCRIBE Failure due to unknown subscription type.");
 				}
 				break;
 			default:
