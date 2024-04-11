@@ -131,6 +131,10 @@ public class KVStore implements KVCommInterface {
 		logger.info("Updated metadata to: " + newMetadata);
 	}
 
+	/**
+	 * 
+	 * @param newMetadata
+	 */
 	public void updateReadMetadata(String newMetadata) {		
 		metadataRead.clear();
 
@@ -148,15 +152,21 @@ public class KVStore implements KVCommInterface {
 
 	}
 
-	public String keyrangeRead() throws Exception  {
+	/**
+	 * 
+	 * @param msgStr
+	 * @return
+	 */
+	public KVMessage sendKVMessage(String msgStr) throws Exception {
 		if (!connected) {
 			throw new Exception("Not connected to a KV server.");
 		}
 
 		KVMessage res = null;
+
 		try {
 			CommProtocol.sendMessage(
-				new KVMessage("KEYRANGE_READ"), output);
+				new KVMessage(msgStr), output);
 		} catch (IOException e) {
 			connectionLost();
 		}
@@ -166,28 +176,30 @@ public class KVStore implements KVCommInterface {
 		} catch (IOException e) {
 			connectionLost();
 		}
+
+		return res;
+	}
+
+	/**
+	 * 
+	 * @return
+	 * @throws Exception
+	 */
+	public String keyrangeRead() throws Exception  {
+
+		KVMessage res = sendKVMessage("KEYRANGE_READ");
 
 		return res.getKey();
 	}
 
-		public String keyrange() throws Exception  {
-		if (!connected) {
-			throw new Exception("Not connected to a KV server.");
-		}
-
-		KVMessage res = null;
-		try {
-			CommProtocol.sendMessage(
-				new KVMessage("KEYRANGE"), output);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		try {
-			res = CommProtocol.receiveMessage(input, true);
-		} catch (IOException e) {
-			connectionLost();
-		}
+	/**
+	 * 
+	 * @return
+	 * @throws Exception
+	 */
+	public String keyrange() throws Exception  {
+		
+		KVMessage res = sendKVMessage("KEYRANGE");
 
 		return res.getKey();
 	}
@@ -211,23 +223,8 @@ public class KVStore implements KVCommInterface {
 	@Override
 	public KVMessage put(String key, String value) throws Exception {
 		findResponsibleServer(key, metadata);
-		if (!connected) {
-			throw new Exception("Not connected to a KV server.");
-		}
-
-		KVMessage res = null;
-		try {
-			CommProtocol.sendMessage(
-				new KVMessage("PUT " + key + " " + value), output);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		try {
-			res = CommProtocol.receiveMessage(input, true);
-		} catch (IOException e) {
-			connectionLost();
-		}
+		
+		KVMessage res = sendKVMessage("PUT " + key + " " + value);
 
 		if (res.getStatus() == StatusType.SERVER_WRITE_LOCK) {
 			// try to wait for a second
@@ -250,41 +247,6 @@ public class KVStore implements KVCommInterface {
 	}
 
 	/**
-	 * Logic for GET, SUBSCRIBE, and UNSUBSCRIBE requests
-	 * 
-	 * @param key
-	 * @param msgStr
-	 * @return
-	 * @throws Exception
-	 */
-	public KVMessage getSkeleton(String key, String msgStr) throws Exception {
-		findResponsibleServer(key, metadataRead);
-		if (!connected) {
-			throw new Exception("Not connected to a KV server.");
-		}
-
-		KVMessage res = null;
-		try {
-			CommProtocol.sendMessage(new KVMessage(msgStr), output);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		try {
-			res = CommProtocol.receiveMessage(input, true);
-		} catch (IOException e) {
-			connectionLost();
-		}
-
-		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
-			String newMetadata = keyrangeRead();
-			updateReadMetadata(newMetadata);
-			return getSkeleton(key, msgStr);
-		}
-		return res;
-	}
-
-	/**
 	 * Retrieves the value for a given key from the KVServer.
 	 *
 	 * @param key the key that identifies the value.
@@ -294,7 +256,17 @@ public class KVStore implements KVCommInterface {
 	 */
 	@Override
 	public KVMessage get(String key) throws Exception {
-		return getSkeleton(key, "GET " + key);
+		findResponsibleServer(key, metadataRead);
+		
+		KVMessage res = sendKVMessage("GET " + key);
+
+		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
+			String newMetadata = keyrangeRead();
+			updateReadMetadata(newMetadata);
+			return get(key);
+		}
+		
+		return res;
 	}
 
 	/**
@@ -321,7 +293,18 @@ public class KVStore implements KVCommInterface {
 	 */
 	public KVMessage subscribeAnyClient(
 			String key, String addr, int port) throws Exception {
-		return getSkeleton(key, "SUBSCRIBE " + key + " " + addr + ":" + port);
+
+		findResponsibleServer(key, metadata);
+		
+		KVMessage res = sendKVMessage("SUBSCRIBE " + key + " " + addr + ":" + port);
+
+		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
+			String newMetadata = keyrange();
+			updateMetadata(newMetadata);
+			return subscribeAnyClient(key, addr, port);
+		}
+		
+		return res;
 	}
 
 	/**
@@ -348,7 +331,18 @@ public class KVStore implements KVCommInterface {
 	 */
 	public KVMessage unsubscribeAnyClient(
 			String key, String addr, int port) throws Exception {
-		return getSkeleton(key, "UNSUBSCRIBE " + key + " " + addr + ":" + port);
+				
+		findResponsibleServer(key, metadata);
+		
+		KVMessage res = sendKVMessage("UNSUBSCRIBE " + key + " " + addr + ":" + port);
+
+		if (res.getStatus() == StatusType.SERVER_NOT_RESPONSIBLE) {
+			String newMetadata = keyrange();
+			updateMetadata(newMetadata);
+			return unsubscribeAnyClient(key, addr, port);
+		}
+		
+		return res;
 	}
 
 	/**
