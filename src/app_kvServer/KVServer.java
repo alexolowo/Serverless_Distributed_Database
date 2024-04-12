@@ -444,10 +444,19 @@ public class KVServer extends Thread implements IKVServer {
 	public void close() {
 		logger.info("Closing server");
 		contactECSShutdown();
+
 		kvs_rep1.clear();
 		writeToStorage(kvs_rep1, replica1DataPath);
 		kvs_rep2.clear();
 		writeToStorage(kvs_rep2, replica2DataPath);
+
+
+		try {
+			rebalanceSubscribers();
+		} catch (Exception e) {
+			logger.error("Failed to rebalance subscribers", e);
+		}
+		
 		if (serverSocket != null) {
 			try {
 				serverSocket.close();
@@ -814,6 +823,109 @@ public class KVServer extends Thread implements IKVServer {
 			r.unlock();
 		}
 		return metadataStr.toString();
+	}
+
+	private void removeThisServerFromHashRange() {
+		List<Map.Entry<String, BigInteger[]>> nodePositions = getNodeOrder();
+		
+		int i = -1;
+
+		for (int j = 0; j < nodePositions.size(); j++) {
+			if (nodePositions.get(j).getKey().equals(this.address + ":" + this.port)) {
+				i = j;
+			}
+		}
+		nodePositions.remove(i);
+
+		int n = nodePositions.size();
+
+		if (n > 0) {
+			BigInteger startRange;
+			if (i == 0) {
+				startRange = nodePositions.get(n - 1).getValue()[1].add(BigInteger.ONE);
+			} else {
+				startRange = nodePositions.get(i - 1).getValue()[1].add(BigInteger.ONE);
+			}
+
+			if (i == n) {
+				i = 0;
+			}
+
+
+			BigInteger position = nodePositions.get(i).getValue()[1];
+			for (Map.Entry<String, BigInteger[]> node: nodePositions) {
+				if (node.getValue()[1].compareTo(position) == 0) {
+					// UPDATE IN METADATA
+					metadata.put(node.getKey(), new BigInteger[] { startRange, position });
+				}
+			}
+
+		}
+    }
+
+	public void rebalanceSubscribers() throws Exception {
+		// TODO
+		removeThisServerFromHashRange();
+		// metadata.remove(this.address + ":" + this.port);
+		// 	List<String> keysToRemove = new ArrayList<String>();
+		
+		List<String> keysToRemoveFromSubscribers = new ArrayList<String>();
+
+		w.lock();
+
+		rebalancing = true;
+
+		try {
+
+			// map of which keys go to which servers
+			Map<String, List<String>> subscriberKeys = createServerKeyBins(subscribers);
+
+			logger.info("New subscriber keys: " + subscriberKeys);
+
+			// go through each key
+			// see which keys need to be sent to other servers
+			for (String server : subscriberKeys.keySet()) {
+				// parse out addr/port
+				String targetAddr = server.split(":")[0];
+				int targetPort = Integer.parseInt(
+						server.split(":")[1]);
+
+				// if target server is this server skip
+				if (targetAddr.equals(this.address) &&
+						targetPort == this.port) {
+					continue;
+				}
+
+				// we want to act as client to another server
+				if (!subscriberKeys.get(server).isEmpty()) {
+					logger.info("SHUTDOWN: Sending subscriber keys to " + targetAddr + ":" + targetPort);
+					KVStore client = new KVStore(targetAddr, targetPort);
+					client.connect();
+					for (String k: subscriberKeys.get(server)) {
+						String[] subscribersList = subscribers.get(k).split(",");
+						for (String subscriber: subscribersList) {
+							String[] subscriberInfo = subscriber.split(":");
+							String subscriberAddr = subscriberInfo[0];
+							int subscriberPort = Integer.parseInt(subscriberInfo[1]);
+							client.subscribeAnyClient(k, subscriberAddr, subscriberPort);
+						}
+						keysToRemoveFromSubscribers.add(k);
+					}
+					client.disconnect();
+				}
+			}
+		} finally {
+
+			rebalancing = false;
+
+			// Don't delete keys right away; delete after
+
+			for (String k : keysToRemoveFromSubscribers) {
+				subscribers.remove(k);
+			}
+
+			w.unlock();
+		}
 	}
 
 	/**
