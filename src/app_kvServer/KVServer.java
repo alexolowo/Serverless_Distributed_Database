@@ -989,7 +989,7 @@ public class KVServer extends Thread implements IKVServer {
 				}
 
 				// we want to act as client to another server
-				if (!serverKeys.get(server).isEmpty()) {
+				if (!serverKeys.get(server).isEmpty() || !subscriberKeys.get(server).isEmpty()) {
 					logger.info("Sending keys to " + targetAddr + ":" + targetPort);
 					KVStore client = new KVStore(targetAddr, targetPort);
 					client.connect();
